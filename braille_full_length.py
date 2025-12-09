@@ -13,8 +13,8 @@ FEEDRATE_MOVE = 1500   # Travel feedrate in mm/min for G1 moves
 SOLENOID_PIN = 65      # Firmware pin number used with M42 to drive the solenoid
 
 # Solenoid timing (tune to your hardware)
-# NORMAL logic: S0 = OFF, S255 = ON  (this matches your “held ON” behavior)
-SOLENOID_ON_MS = 200        # How long to energize the solenoid (down stroke)
+# NORMAL logic: S0 = OFF, S255 = ON
+SOLENOID_ON_MS = 200       # How long to energize the solenoid (down stroke)
 SOLENOID_RETRACT_MS = 200  # Time to allow retract (up) before moving away
 
 # EXTRA SAFETY DELAYS
@@ -33,22 +33,19 @@ SAFE_MOTION_TUNING = [
 # USER CONFIG – BOARD GEOMETRY (HOLE GRID, IN MILLIMETERS)
 # ============================================================
 # Each braille cell is a 2 x 3 grid of holes.
-# Board has 23 x 23 cells (cell indices 0..22 in U and V).
 
-BOARD_CELLS_U = 20  # number of cell columns (0..22)
-BOARD_CELLS_V = 22  # number of cell rows    (0..22)
+BOARD_CELLS_U = 20  # number of cell columns
+BOARD_CELLS_V = 22  # number of cell rows
 
 # Measured center-to-center spacing between neighboring holes
 HOLE_PITCH_U_MM = 2.4   # horizontal hole spacing in mm
 HOLE_PITCH_V_MM = 2.4   # vertical hole spacing in mm
 
 # Hole counts inside a cell (2 x 3):
-#   left vs right dot columns differ by 1 hole
-#   top vs middle vs bottom rows differ by 1 hole
 HOLES_BETWEEN_DOTS_U = 1  # holes between left/right dots within a cell
 HOLES_BETWEEN_DOTS_V = 1  # holes between top/middle/bottom dots within a cell
 
-# Derived cell pitch in mm (do not edit unless you know why)
+# Derived cell pitch in mm (your tuned values)
 CELL_PITCH_U = 7
 CELL_PITCH_V = 11
 
@@ -74,11 +71,11 @@ DOT_OFFSETS = {
 # USER CONFIG – TEXT / LAYOUT
 # ============================================================
 
-TEXT_TO_PRINT = "We Are Charlie Kirk we carry the flame"     # example: multiple letters
+TEXT_TO_PRINT = "We Are Charlie Kirk we carry the flame"
 START_ROW_INDEX = 0     # Braille row index (0 = first row; must be < BOARD_CELLS_V)
 
 # ============================================================
-# BRAILLE MAP (Grade 1 letters a–z)
+# BRAILLE MAP (Grade 1 letters, numbers, space)
 # ============================================================
 
 BRAILLE_MAP = {
@@ -118,7 +115,7 @@ BRAILLE_MAP = {
     "8": 0b001110,
     "9": 0b001001,
     "0": 0b001011,
-    " ": 0b000000
+    " ": 0b000000,
 }
 
 # ============================================================
@@ -194,30 +191,37 @@ def cell_origin_uv(cell_col: int, cell_row: int):
     v0 = cell_row * CELL_PITCH_V
     return u0, v0
 
-def print_braille_line(ser, text: str, row_index: int = 0):
+def print_braille_text(ser, text: str, start_row_index: int = 0):
     """
-    Print one line of braille at the specified row index.
-    Adds:
-      - delay between dots in a cell
-      - delay between cells/letters
+    Print braille for an arbitrary-length string, automatically wrapping:
+      - when we hit BOARD_CELLS_U columns, move to next row
+      - stop if we run out of rows (>= BOARD_CELLS_V)
     """
-    if row_index < 0 or row_index >= BOARD_CELLS_V:
-        print(f"Row index {row_index} is outside board (0..{BOARD_CELLS_V - 1})")
+    row = start_row_index
+    col = 0
+
+    if row < 0 or row >= BOARD_CELLS_V:
+        print(f"Start row {row} is outside board (0..{BOARD_CELLS_V - 1})")
         return
 
-    for cell_col, ch in enumerate(text):
-        if cell_col >= BOARD_CELLS_U:
-            print("Text too long for board width; truncating this line.")
-            break
+    for ch in text:
+        # If we've filled this row, move to the next
+        if col >= BOARD_CELLS_U:
+            row += 1
+            col = 0
+            if row >= BOARD_CELLS_V:
+                print("No more rows on board; stopping.")
+                break
 
         pattern = char_to_pattern(ch)
 
-        # Skip dots for spaces/unsupported chars but keep cell spacing
+        # Blank cell for spaces / unknown chars, but still advance one cell
         if pattern == 0:
+            col += 1
             time.sleep(DELAY_BETWEEN_CELLS_MS / 1000.0)
             continue
 
-        cell_u, cell_v = cell_origin_uv(cell_col, row_index)
+        cell_u, cell_v = cell_origin_uv(col, row)
 
         # Dots within a single letter/cell
         for dot in iter_dots(pattern):
@@ -231,7 +235,8 @@ def print_braille_line(ser, text: str, row_index: int = 0):
             # extra safety delay between dots in same letter
             time.sleep(DELAY_BETWEEN_DOTS_MS / 1000.0)
 
-        # extra safety delay between letters/cells
+        # done with this cell/letter
+        col += 1
         time.sleep(DELAY_BETWEEN_CELLS_MS / 1000.0)
 
 # ============================================================
@@ -256,8 +261,8 @@ def main():
     # Zero logical origin at current physical tool position
     send(ser, "G92 X0 Y0 Z0")
 
-    print(f"Printing braille for {TEXT_TO_PRINT!r} at row {START_ROW_INDEX}")
-    print_braille_line(ser, TEXT_TO_PRINT, row_index=START_ROW_INDEX)
+    print(f"Printing braille for {TEXT_TO_PRINT!r} starting at row {START_ROW_INDEX}")
+    print_braille_text(ser, TEXT_TO_PRINT, start_row_index=START_ROW_INDEX)
 
     # Return to original position
     move_to_uv(ser, 0.0, 0.0)
